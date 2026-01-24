@@ -465,6 +465,29 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
   });
 });
 
+app.get("/setup/api/debug", requireSetupAuth, async (_req, res) => {
+  const v = await runCmd(CLAWDBOT_NODE, clawArgs(["--version"]));
+  const help = await runCmd(CLAWDBOT_NODE, clawArgs(["channels", "add", "--help"]));
+  res.json({
+    wrapper: {
+      node: process.version,
+      port: PORT,
+      stateDir: STATE_DIR,
+      workspaceDir: WORKSPACE_DIR,
+      configPath: configPath(),
+      gatewayTokenFromEnv: Boolean(process.env.CLAWDBOT_GATEWAY_TOKEN?.trim()),
+      gatewayTokenPersisted: fs.existsSync(path.join(STATE_DIR, "gateway.token")),
+      railwayCommit: process.env.RAILWAY_GIT_COMMIT_SHA || null,
+    },
+    clawdbot: {
+      entry: CLAWDBOT_ENTRY,
+      node: CLAWDBOT_NODE,
+      version: v.output.trim(),
+      channelsAddHelpIncludesTelegram: help.output.includes("telegram"),
+    },
+  });
+});
+
 app.post("/setup/api/reset", requireSetupAuth, async (_req, res) => {
   // Minimal reset: delete the config file so /setup can rerun.
   // Keep credentials/sessions/workspace by default.
@@ -486,20 +509,35 @@ app.get("/setup/export", requireSetupAuth, async (_req, res) => {
     `attachment; filename="clawdbot-backup-${new Date().toISOString().replace(/[:.]/g, "-")}.tar.gz"`,
   );
 
-  const stateParent = path.resolve(STATE_DIR);
-  const workspaceParent = path.resolve(WORKSPACE_DIR);
+  // Prefer exporting from a common /data root so archives are easy to inspect and restore.
+  // This preserves dotfiles like /data/.clawdbot/clawdbot.json.
+  const stateAbs = path.resolve(STATE_DIR);
+  const workspaceAbs = path.resolve(WORKSPACE_DIR);
 
-  // Stream a tar.gz containing the persisted state + workspace.
-  // We set cwd=/ and pass relative paths so the archive contains e.g. data/.clawdbot and data/workspace.
+  const dataRoot = "/data";
+  const underData = (p) => p === dataRoot || p.startsWith(dataRoot + path.sep);
+
+  let cwd = "/";
+  let paths = [stateAbs, workspaceAbs].map((p) => p.replace(/^\//, ""));
+
+  if (underData(stateAbs) && underData(workspaceAbs)) {
+    cwd = dataRoot;
+    // We export relative to /data so the archive contains: .clawdbot/... and workspace/...
+    paths = [
+      path.relative(dataRoot, stateAbs) || ".",
+      path.relative(dataRoot, workspaceAbs) || ".",
+    ];
+  }
+
   const stream = tar.c(
     {
       gzip: true,
       portable: true,
       noMtime: true,
-      cwd: "/",
+      cwd,
       onwarn: () => {},
     },
-    [stateParent, workspaceParent].map((p) => p.replace(/^\//, "")),
+    paths,
   );
 
   stream.on("error", (err) => {

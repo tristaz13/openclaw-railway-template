@@ -15,7 +15,7 @@ The wrapper manages the OpenClaw lifecycle: onboarding → gateway startup → t
 ## Development Commands
 
 ```bash
-# Local development (requires OpenClaw in /openclaw or OPENCLAW_ENTRY set)
+# Local development (requires OpenClaw installed globally or OPENCLAW_ENTRY set)
 npm run dev
 
 # Production start
@@ -28,7 +28,7 @@ npm run lint
 ## Docker Build & Local Testing
 
 ```bash
-# Build the container (builds OpenClaw from source)
+# Build the container
 docker build -t openclaw-railway-template .
 
 # Run locally with volume
@@ -74,7 +74,7 @@ open http://localhost:8080/setup  # password: test
   - **setup.html**: Setup wizard HTML structure
   - **styles.css**: Setup wizard styling (extracted from inline styles)
   - **setup-app.js**: Client-side JS for `/setup` wizard (vanilla JS, no build step)
-- **Dockerfile**: Multi-stage build (builds OpenClaw from source, installs wrapper deps)
+- **Dockerfile**: Single-stage build (installs OpenClaw via npm, installs wrapper deps)
 
 ### Environment Variables
 
@@ -89,7 +89,7 @@ open http://localhost:8080/setup  # password: test
 - `OPENCLAW_GATEWAY_TOKEN` — auth token for gateway (auto-generated if unset)
 - `PORT` — wrapper HTTP port (default 8080)
 - `INTERNAL_GATEWAY_PORT` — gateway internal port (default 18789)
-- `OPENCLAW_ENTRY` — path to `entry.js` (default `/openclaw/dist/entry.js`)
+- `OPENCLAW_ENTRY` — path to `entry.js` (default `/usr/local/lib/node_modules/openclaw/dist/entry.js`)
 
 ### Authentication Flow
 
@@ -163,7 +163,7 @@ Edit `buildOnboardArgs()` (src/server.js:442-496) to add new CLI flags or auth p
 - Template must mount a volume at `/data`
 - Must set `SETUP_PASSWORD` in Railway Variables
 - Public networking must be enabled (assigns `*.up.railway.app` domain)
-- OpenClaw version is pinned via Docker build arg `OPENCLAW_GIT_REF` (default: `main`)
+- OpenClaw is installed via `npm install -g openclaw@latest` during Docker build
 
 ## Serena Semantic Coding
 

@@ -894,8 +894,16 @@ proxy.on("proxyReq", (proxyReq, req, res) => {
 
 // Inject auth token into WebSocket upgrade requests
 proxy.on("proxyReqWs", (proxyReq, req, socket, options, head) => {
-  console.log(`[proxy] WebSocket upgrade ${req.url} - injecting token: ${OPENCLAW_GATEWAY_TOKEN.slice(0, 16)}...`);
-  proxyReq.setHeader("Authorization", `Bearer ${OPENCLAW_GATEWAY_TOKEN}`);
+  const fullToken = OPENCLAW_GATEWAY_TOKEN;
+  console.log(`[proxy] WebSocket upgrade ${req.url}`);
+  console.log(`[proxy]   Token to inject: ${fullToken}`);
+  console.log(`[proxy]   Token length: ${fullToken.length}`);
+  console.log(`[proxy]   Existing Authorization header: ${req.headers.authorization || '(none)'}`);
+
+  proxyReq.setHeader("Authorization", `Bearer ${fullToken}`);
+
+  console.log(`[proxy]   Set Authorization to: Bearer ${fullToken.slice(0, 16)}...`);
+  console.log(`[proxy]   All headers being sent:`, JSON.stringify(proxyReq.getHeaders()));
 });
 
 app.use(async (req, res) => {
@@ -938,7 +946,14 @@ server.on("upgrade", async (req, socket, head) => {
     socket.destroy();
     return;
   }
-  // Proxy WebSocket upgrade (auth token injected via proxyReqWs event)
+
+  // Inject auth token BEFORE proxying (proxyReqWs event might not work reliably)
+  console.log(`[ws-upgrade] Injecting token directly into req.headers`);
+  console.log(`[ws-upgrade]   Before: ${req.headers.authorization || '(none)'}`);
+  req.headers.authorization = `Bearer ${OPENCLAW_GATEWAY_TOKEN}`;
+  console.log(`[ws-upgrade]   After: ${req.headers.authorization.slice(0, 30)}...`);
+
+  // Proxy WebSocket upgrade (token already injected above)
   proxy.ws(req, socket, head, { target: GATEWAY_TARGET });
 });
 

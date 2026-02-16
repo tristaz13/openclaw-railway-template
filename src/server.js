@@ -978,6 +978,14 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
           );
           extra += `\n[telegram config] exit=${set.code} (output ${set.output.length} chars)\n${set.output || "(no output)"}`;
           extra += `\n[telegram verify] exit=${get.code} (output ${get.output.length} chars)\n${get.output || "(no output)"}`;
+          
+          // Enable telegram plugin
+          console.log("[telegram] Enabling telegram plugin...");
+          const enablePlugin = await runCmd(
+            OPENCLAW_NODE,
+            clawArgs(["plugins", "enable", "telegram"]),
+          );
+          extra += `\n[telegram plugin] exit=${enablePlugin.code}\n${enablePlugin.output || "(no output)"}`;
         }
       }
 
@@ -1042,6 +1050,14 @@ app.post("/setup/api/run", requireSetupAuth, async (req, res) => {
           extra += `\n[slack verify] exit=${get.code} (output ${get.output.length} chars)\n${get.output || "(no output)"}`;
         }
       }
+
+      // Run doctor --fix to fix any configuration issues before gateway restart
+      console.log("[setup] Running openclaw doctor --fix...");
+      const doctorFix = await runCmd(
+        OPENCLAW_NODE,
+        clawArgs(["doctor", "--fix"]),
+      );
+      extra += `\n[doctor --fix] exit=${doctorFix.code}\n${doctorFix.output || "(no output)"}`;
 
       // Apply changes immediately.
       await restartGateway();
@@ -1501,6 +1517,191 @@ app.post("/setup/api/pairing/approve", requireSetupAuth, async (req, res) => {
     .json({ ok: r.code === 0, output: r.output });
 });
 
+// ========== BACKUP IMPORT HELPER FUNCTIONS ==========
+
+/**
+ * Check if path p is under root directory (prevents path traversal attacks)
+ */
+function isUnderDir(p, root) {
+  const normP = path.resolve(p);
+  const normRoot = path.resolve(root);
+  return normP === normRoot || normP.startsWith(normRoot + path.sep);
+}
+
+/**
+ * Validate that a tar entry path is safe (no path traversal, no absolute paths)
+ * Returns true if path looks safe, false if it should be filtered out
+ */
+function looksSafeTarPath(p) {
+  // Reject absolute paths (leading /)
+  if (p.startsWith("/")) {
+    return false;
+  }
+  
+  // Reject Windows drive letters (e.g., C:, D:)
+  if (/^[a-zA-Z]:/.test(p)) {
+    return false;
+  }
+  
+  // Reject paths containing .. (parent directory traversal)
+  const parts = p.split(/[/\\]/);
+  if (parts.some((part) => part === "..")) {
+    return false;
+  }
+  
+  return true;
+}
+
+/**
+ * Read request body into a Buffer with size limit
+ * Enforces size limit during streaming (not after) to prevent memory exhaustion
+ */
+function readBodyBuffer(req, maxBytes) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let totalSize = 0;
+    
+    req.on("data", (chunk) => {
+      totalSize += chunk.length;
+      
+      if (totalSize > maxBytes) {
+        req.destroy();
+        reject(new Error(`Request body exceeds size limit of ${maxBytes} bytes`));
+        return;
+      }
+      
+      chunks.push(chunk);
+    });
+    
+    req.on("end", () => {
+      resolve(Buffer.concat(chunks));
+    });
+    
+    req.on("error", (err) => {
+      reject(err);
+    });
+  });
+}
+
+// ========== BACKUP IMPORT ENDPOINT ==========
+
+/**
+ * POST /setup/import - Import backup archive
+ * Security: 250MB max, path traversal prevention, /data-only extraction
+ */
+app.post("/setup/import", requireSetupAuth, async (req, res) => {
+  const MAX_UPLOAD_SIZE = 250 * 1024 * 1024; // 250MB
+  
+  try {
+    console.log("[import] Starting backup import...");
+    
+    // Verify STATE_DIR and WORKSPACE_DIR are under /data for security
+    const dataRoot = "/data";
+    if (!isUnderDir(STATE_DIR, dataRoot) || !isUnderDir(WORKSPACE_DIR, dataRoot)) {
+      console.error("[import] Security check failed: STATE_DIR or WORKSPACE_DIR not under /data");
+      return res.status(400).json({
+        ok: false,
+        error: "Import is only supported when STATE_DIR and WORKSPACE_DIR are under /data (Railway volume)",
+      });
+    }
+    
+    // Stop gateway before import to prevent file conflicts
+    console.log("[import] Stopping gateway...");
+    if (gatewayProc) {
+      try {
+        gatewayProc.kill("SIGTERM");
+        gatewayProc = null;
+      } catch (err) {
+        console.warn(`[import] Failed to stop gateway: ${err.message}`);
+      }
+    }
+    
+    // Also pkill any orphaned gateway processes
+    try {
+      await runCmd("pkill", ["-f", "gateway run"], { timeoutMs: 5000 });
+    } catch {
+      // Ignore pkill errors (process may not exist)
+    }
+    
+    // Wait for gateway to fully stop
+    await sleep(2000);
+    console.log("[import] Gateway stopped");
+    
+    // Read request body with size limit
+    console.log("[import] Reading upload (max 250MB)...");
+    const buffer = await readBodyBuffer(req, MAX_UPLOAD_SIZE);
+    console.log(`[import] Received ${buffer.length} bytes`);
+    
+    // Write to temp file for extraction
+    const tmpFile = path.join(os.tmpdir(), `openclaw-import-${Date.now()}.tar.gz`);
+    fs.writeFileSync(tmpFile, buffer);
+    console.log(`[import] Wrote temp file: ${tmpFile}`);
+    
+    try {
+      // Extract tar to /data with security filter
+      console.log("[import] Extracting archive to /data...");
+      let extractedCount = 0;
+      let filteredCount = 0;
+      
+      await tar.x({
+        file: tmpFile,
+        cwd: dataRoot,
+        filter: (path, entry) => {
+          // Security: only allow safe paths
+          if (!looksSafeTarPath(path)) {
+            console.warn(`[import] Filtered unsafe path: ${path}`);
+            filteredCount++;
+            return false;
+          }
+          extractedCount++;
+          return true;
+        },
+        onwarn: (code, message) => {
+          console.warn(`[import] tar warning: ${code} - ${message}`);
+        },
+      });
+      
+      console.log(`[import] Extraction complete: ${extractedCount} files extracted, ${filteredCount} filtered`);
+      
+      // Cleanup temp file
+      fs.rmSync(tmpFile, { force: true });
+      
+      // Restart gateway to load imported config
+      console.log("[import] Restarting gateway...");
+      try {
+        await restartGateway();
+        console.log("[import] Gateway restarted successfully");
+      } catch (err) {
+        console.error(`[import] Gateway restart failed: ${err}`);
+        return res.status(500).json({
+          ok: false,
+          error: `Import succeeded but gateway restart failed: ${String(err)}`,
+        });
+      }
+      
+      return res.json({
+        ok: true,
+        message: `Import successful: ${extractedCount} files extracted, ${filteredCount} filtered`,
+      });
+      
+    } catch (err) {
+      // Cleanup temp file on error
+      try {
+        fs.rmSync(tmpFile, { force: true });
+      } catch {}
+      
+      throw err;
+    }
+    
+  } catch (err) {
+    console.error("[import] Error:", err);
+    return res.status(500).json({
+      ok: false,
+      error: `Import failed: ${String(err)}`,
+    });
+  }
+});
+
 app.post("/setup/api/reset", requireSetupAuth, async (_req, res) => {
   // Minimal reset: delete the config file so /setup can rerun.
   // Keep credentials/sessions/workspace by default.
@@ -1535,6 +1736,27 @@ app.post("/setup/api/reset", requireSetupAuth, async (_req, res) => {
       .send("OK - deleted config file. You can rerun setup now.");
   } catch (err) {
     res.status(500).type("text/plain").send(String(err));
+  }
+});
+
+// ========== FAST AUTH GROUPS ENDPOINT ==========
+
+/**
+ * GET /setup/api/auth-groups - Fast auth groups loading
+ * Returns auth groups without running expensive openclaw commands
+ */
+app.get("/setup/api/auth-groups", requireSetupAuth, async (_req, res) => {
+  try {
+    return res.json({
+      ok: true,
+      authGroups: AUTH_GROUPS,
+    });
+  } catch (err) {
+    console.error("[/setup/api/auth-groups] error:", err);
+    return res.status(500).json({
+      ok: false,
+      error: `Internal error: ${String(err)}`,
+    });
   }
 });
 

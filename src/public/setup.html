@@ -18,6 +18,17 @@
       &nbsp;|&nbsp;
       <a href="/setup/export" target="_blank">Download backup (.tar.gz)</a>
     </div>
+    
+    <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #ddd;">
+      <h3 style="margin-top: 0; font-size: 1rem;">Import Backup</h3>
+      <p class="muted">Restore config and workspace from a previous backup. This will overwrite existing data.</p>
+      
+      <label>Backup file (.tar.gz)</label>
+      <input id="importFile" type="file" accept=".tar.gz,.tgz,application/gzip,application/x-gzip" />
+      
+      <button id="importButton">Import backup</button>
+      <pre id="importOutput" style="margin-top: 1rem; max-height: 200px; overflow-y: auto; background: #f5f5f5; padding: 0.75rem; border-radius: 4px;"></pre>
+    </div>
   </div>
 
   <div class="card">
@@ -85,10 +96,14 @@
     <h2>1) Model/auth provider</h2>
     <p class="muted">Matches the groups shown in the terminal onboarding.</p>
     <label>Provider group</label>
-    <select id="authGroup"></select>
+    <select id="authGroup">
+      <option value="">Select provider group...</option>
+    </select>
 
     <label>Auth method</label>
-    <select id="authChoice"></select>
+    <select id="authChoice">
+      <option value="">Select auth method...</option>
+    </select>
 
     <label>Key / Token (if required)</label>
     <input id="authSecret" type="password" placeholder="Paste API key / token if applicable" />

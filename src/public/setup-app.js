@@ -53,12 +53,23 @@
     });
   }
 
+  function loadAuthGroups() {
+    return httpJson('/setup/api/auth-groups').then(function (j) {
+      renderAuth(j.authGroups || []);
+    }).catch(function (e) {
+      console.error('Failed to load auth groups:', e);
+      // Fallback to loading from status if fast endpoint fails
+      return httpJson('/setup/api/status').then(function (j) {
+        renderAuth(j.authGroups || []);
+      });
+    });
+  }
+
   function refreshStatus() {
     setStatus('Loading...');
     return httpJson('/setup/api/status').then(function (j) {
       var ver = j.openclawVersion ? (' | ' + j.openclawVersion) : '';
       setStatus((j.configured ? 'Configured - open /openclaw' : 'Not configured - run setup below') + ver);
-      renderAuth(j.authGroups || []);
       // If channels are unsupported, surface it for debugging.
       if (j.channelsAddHelp && j.channelsAddHelp.indexOf('telegram') === -1) {
         logEl.textContent += '\nNote: this openclaw build does not list telegram in `channels add --help`. Telegram auto-add will be skipped.\n';
@@ -437,5 +448,101 @@
     devicesRefreshBtn.onclick = refreshDevices;
   }
 
+  // ========== BACKUP IMPORT ==========
+  var importFileEl = document.getElementById('importFile');
+  var importButtonEl = document.getElementById('importButton');
+  var importOutputEl = document.getElementById('importOutput');
+
+  function importBackup() {
+    var file = importFileEl.files[0];
+    
+    if (!file) {
+      importOutputEl.textContent = 'Error: Please select a file';
+      return;
+    }
+
+    // Validate file type
+    var fileName = file.name.toLowerCase();
+    if (!fileName.endsWith('.tar.gz') && !fileName.endsWith('.tgz')) {
+      importOutputEl.textContent = 'Error: File must be a .tar.gz or .tgz archive';
+      return;
+    }
+
+    // Validate file size (250MB max)
+    var maxSize = 250 * 1024 * 1024;
+    if (file.size > maxSize) {
+      importOutputEl.textContent = 'Error: File size exceeds 250MB limit (got ' + Math.round(file.size / 1024 / 1024) + 'MB)';
+      return;
+    }
+
+    // Confirmation dialog
+    var confirmMsg = 'Import backup from "' + file.name + '"?\n\n' +
+                     'This will:\n' +
+                     '- Stop the gateway\n' +
+                     '- Overwrite existing config and workspace\n' +
+                     '- Restart the gateway\n' +
+                     '- Reload this page\n\n' +
+                     'Are you sure?';
+    
+    if (!confirm(confirmMsg)) {
+      importOutputEl.textContent = 'Import cancelled';
+      return;
+    }
+
+    // Disable button and show progress
+    importButtonEl.disabled = true;
+    importButtonEl.textContent = 'Importing...';
+    importOutputEl.textContent = 'Uploading ' + file.name + ' (' + Math.round(file.size / 1024 / 1024) + 'MB)...\n';
+
+    // Upload file
+    fetch('/setup/import', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: {
+        'content-type': 'application/gzip'
+      },
+      body: file
+    })
+      .then(function (res) {
+        return res.text().then(function (text) {
+          return { status: res.status, text: text };
+        });
+      })
+      .then(function (result) {
+        var j;
+        try {
+          j = JSON.parse(result.text);
+        } catch (_e) {
+          j = { ok: false, error: result.text };
+        }
+
+        if (j.ok) {
+          importOutputEl.textContent = 'Success: ' + (j.message || 'Import completed') + '\n\nReloading page in 2 seconds...';
+          
+          // Reload page after successful import to show fresh state
+          setTimeout(function () {
+            window.location.reload();
+          }, 2000);
+        } else {
+          importOutputEl.textContent = 'Error: ' + (j.error || 'Import failed');
+          importButtonEl.disabled = false;
+          importButtonEl.textContent = 'Import backup';
+        }
+      })
+      .catch(function (e) {
+        importOutputEl.textContent = 'Error: ' + String(e);
+        importButtonEl.disabled = false;
+        importButtonEl.textContent = 'Import backup';
+      });
+  }
+
+  if (importButtonEl) {
+    importButtonEl.onclick = importBackup;
+  }
+
+  // Load auth groups immediately (fast endpoint)
+  loadAuthGroups();
+  
+  // Load status (slower, but needed for version info)
   refreshStatus();
 })();

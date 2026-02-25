@@ -20,13 +20,7 @@ RUN corepack enable
 
 WORKDIR /openclaw
 
-# OpenClaw version control:
-# - Set OPENCLAW_VERSION Railway variable to pin a specific tag/branch (e.g., v2026.2.15)
-# - If not set, auto-detects the latest stable release via 3-tier cascade:
-#     1. GitHub Releases API (/releases/latest) — excludes pre-releases and drafts
-#     2. git ls-remote --sort=-v:refname — latest stable tag by version sort
-#     3. main branch (final fallback, with warning — may be unstable)
-# - Can also override locally with --build-arg OPENCLAW_VERSION=<tag>
+# OpenClaw version control
 ARG OPENCLAW_VERSION
 RUN set -eu; \
   if [ -n "${OPENCLAW_VERSION:-}" ]; then \
@@ -58,8 +52,7 @@ RUN set -eu; \
   fi; \
   git clone --depth 1 --branch "${REF}" https://github.com/openclaw/openclaw.git .
 
-# Patch: relax version requirements for packages that may reference unpublished versions.
-# Apply to all extension package.json files to handle workspace protocol (workspace:*).
+# Patch extension package.json files
 RUN set -eux; \
   find ./extensions -name 'package.json' -type f | while read -r f; do \
     sed -i -E 's/"openclaw"[[:space:]]*:[[:space:]]*">=[^"]+"/"openclaw": "*"/g' "$f"; \
@@ -70,7 +63,6 @@ RUN pnpm install --no-frozen-lockfile
 RUN pnpm build
 ENV OPENCLAW_PREFER_PNPM=1
 RUN pnpm ui:install && pnpm ui:build
-
 
 # Runtime image
 FROM node:22-bookworm
@@ -101,17 +93,16 @@ COPY --from=openclaw-build /openclaw /openclaw
 RUN printf '%s\n' '#!/usr/bin/env bash' 'exec node /openclaw/dist/entry.js "$@"' > /usr/local/bin/openclaw \
   && chmod +x /usr/local/bin/openclaw
 
-# ==========================================
-# INSTALLATION DE TES OUTILS SEO GLOBAUX ICI
-# ==========================================
+# ==================================================
+# INSTALLATION DES OUTILS SYSTÈME (FONCTIONNE ICI)
+# ==================================================
 RUN npm install -g firecrawl-cli firebase-tools
-RUN npx clawhub@latest install pskoett/self-improving-agent
-# ==========================================
+# ==================================================
 
 COPY src ./src
 COPY entrypoint.sh ./entrypoint.sh
 
-# Create openclaw user, set up directories, install Homebrew as that user
+# Create openclaw user, set up directories, install Homebrew
 RUN useradd -m -s /bin/bash openclaw \
   && chown -R openclaw:openclaw /app \
   && mkdir -p /data && chown openclaw:openclaw /data \

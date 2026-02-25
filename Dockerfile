@@ -104,7 +104,7 @@ RUN printf '%s\n' '#!/usr/bin/env bash' 'exec node /openclaw/dist/entry.js "$@"'
 # ==========================================
 # INSTALLATION DE TES OUTILS SEO GLOBAUX ICI
 # ==========================================
-RUN npm install -g firecrawl-cli
+RUN npm install -g firecrawl-cli firebase-tools
 # ==========================================
 
 COPY src ./src

@@ -25,4 +25,12 @@ else
   fi
 fi
 
+# ==========================================================
+# INSTALLATION DU SKILL DE MÉMOIRE (SELF-IMPROVING-AGENT)
+# ==========================================================
+# On l'installe sous l'utilisateur openclaw pour éviter les problèmes de droits
+echo "[entrypoint] Checking for self-improving-agent..."
+gosu openclaw npx clawhub@latest install self-improving-agent || echo "[entrypoint] Skill installation failed but continuing..."
+# ==========================================================
+
 exec gosu openclaw node src/server.js

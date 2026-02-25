@@ -105,6 +105,7 @@ RUN printf '%s\n' '#!/usr/bin/env bash' 'exec node /openclaw/dist/entry.js "$@"'
 # INSTALLATION DE TES OUTILS SEO GLOBAUX ICI
 # ==========================================
 RUN npm install -g firecrawl-cli firebase-tools
+RUN npx clawhub@latest install pskoett/self-improving-agent
 # ==========================================
 
 COPY src ./src

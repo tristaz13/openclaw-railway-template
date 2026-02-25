@@ -101,6 +101,12 @@ COPY --from=openclaw-build /openclaw /openclaw
 RUN printf '%s\n' '#!/usr/bin/env bash' 'exec node /openclaw/dist/entry.js "$@"' > /usr/local/bin/openclaw \
   && chmod +x /usr/local/bin/openclaw
 
+# ==========================================
+# INSTALLATION DE TES OUTILS SEO GLOBAUX ICI
+# ==========================================
+RUN npm install -g firecrawl-cli
+# ==========================================
+
 COPY src ./src
 COPY entrypoint.sh ./entrypoint.sh
 
